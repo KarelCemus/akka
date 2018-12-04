@@ -9,9 +9,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration._
 
 import akka.NotUsed
+import akka.actor.testkit.typed.TestException
 import akka.actor.testkit.typed.scaladsl._
 import akka.actor.typed.ActorRef
 import akka.actor.typed.Behavior
+import akka.actor.typed.SupervisorStrategy
 import akka.actor.typed.scaladsl.ActorContext
 import akka.actor.typed.scaladsl.Behaviors
 import akka.persistence.typed.ExpectingReply
@@ -23,11 +25,16 @@ import org.scalatest.WordSpecLike
 
 object PersistentBehaviorStashSpec {
   def conf: Config = ConfigFactory.parseString(
-    """
-    #akka.loglevel = DEBUG
-    #akka.persistence.typed.log-stashing = on
+    s"""
+    akka.loglevel = DEBUG
+    akka.persistence.typed.log-stashing = on
     akka.persistence.journal.plugin = "akka.persistence.journal.inmem"
-    """)
+    akka.persistence.journal.plugin = "failure-journal"
+    failure-journal = $${akka.persistence.journal.inmem}
+    failure-journal {
+      class = "akka.persistence.typed.scaladsl.ChaosJournal"
+    }
+    """).withFallback(ConfigFactory.defaultReference()).resolve()
 
   sealed trait Command[ReplyMessage] extends ExpectingReply[ReplyMessage]
   // Unstash and change to active mode
@@ -41,6 +48,7 @@ object PersistentBehaviorStashSpec {
   // Retrieve current state, independent of active/inactive
   final case class GetValue(replyTo: ActorRef[State]) extends Command[State]
   final case class Unhandled(replyTo: ActorRef[NotUsed]) extends Command[NotUsed]
+  final case class Throw(id: String, t: Throwable, replyTo: ActorRef[Ack]) extends Command[Ack]
 
   final case class Ack(id: String)
 
@@ -53,7 +61,9 @@ object PersistentBehaviorStashSpec {
   final case class State(value: Int, history: Vector[Int], active: Boolean)
 
   def counter(persistenceId: PersistenceId): Behavior[Command[_]] =
-    Behaviors.setup(ctx ⇒ counter(ctx, persistenceId))
+    Behaviors.supervise[Command[_]] {
+      Behaviors.setup(ctx ⇒ counter(ctx, persistenceId))
+    }.onFailure(SupervisorStrategy.restart)
 
   def counter(
     ctx:           ActorContext[Command[_]],
@@ -78,6 +88,7 @@ object PersistentBehaviorStashSpec {
           if (!state.active) throw new IllegalStateException
           state.copy(active = false)
       })
+      .onPersistFailure(SupervisorStrategy.restartWithBackoff(1.second, maxBackoff = 2.seconds, 0.0))
   }
 
   private def active(state: State, command: Command[_]): ReplyEffect[Event, State] = {
@@ -98,6 +109,9 @@ object PersistentBehaviorStashSpec {
         Effect.reply(cmd)(Ack(cmd.id))
       case _: Unhandled ⇒
         Effect.unhandled.thenNoReply()
+      case Throw(id, t, replyTo) ⇒
+        replyTo ! Ack(id)
+        throw t
     }
   }
 
@@ -119,6 +133,9 @@ object PersistentBehaviorStashSpec {
           .thenReply(cmd)(_ ⇒ Ack(cmd.id))
       case _: Unhandled ⇒
         Effect.unhandled.thenNoReply()
+      case Throw(id, t, replyTo) ⇒
+        replyTo ! Ack(id)
+        throw t
     }
   }
 }
@@ -331,6 +348,93 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       value1 should ===(100)
       value2 should ===(5200)
       value3 should ===(8100)
+    }
+
+    // FIXME what is desired behavior?
+    "discard stashing state when restarted" in {
+      val c = spawn(counter(nextPid()))
+      val ackProbe = TestProbe[Ack]
+      val stateProbe = TestProbe[State]
+
+      c ! Increment("inc-1", ackProbe.ref)
+      ackProbe.expectMessage(Ack("inc-1"))
+
+      c ! Deactivate("deact", ackProbe.ref)
+      ackProbe.expectMessage(Ack("deact"))
+
+      c ! Increment("inc-2", ackProbe.ref)
+      c ! Increment("inc-3", ackProbe.ref)
+      c ! GetValue(stateProbe.ref)
+      stateProbe.expectMessage(State(1, Vector(0), active = false))
+
+      c ! Throw("throw", new TestException("test"), ackProbe.ref)
+      ackProbe.expectMessage(Ack("throw"))
+
+      c ! Increment("inc-4", ackProbe.ref)
+      c ! GetValue(stateProbe.ref)
+      stateProbe.expectMessage(State(1, Vector(0), active = false))
+
+      c ! Activate("act", ackProbe.ref)
+      c ! Increment("inc-5", ackProbe.ref)
+
+      ackProbe.expectMessage(Ack("act"))
+      // inc-2 an inc-3 was in external stash, and didn't survive restart, as expected
+      ackProbe.expectMessage(Ack("inc-4"))
+      ackProbe.expectMessage(Ack("inc-5"))
+
+      c ! GetValue(stateProbe.ref)
+      stateProbe.expectMessage(State(3, Vector(0, 1, 2), active = true))
+    }
+
+    // FIXME what is desired behavior?
+    "keep internal stashing state when persist failed" in {
+      val c = spawn(counter(PersistenceId("fail-fifth-a")))
+      val ackProbe = TestProbe[Ack]
+      val stateProbe = TestProbe[State]
+
+      (1 to 10).foreach { n ⇒
+        c ! Increment(s"inc-$n", ackProbe.ref)
+      }
+
+      (1 to 10).foreach { n ⇒
+        if (n != 5)
+          ackProbe.expectMessage(Ack(s"inc-$n"))
+      }
+
+      c ! GetValue(stateProbe.ref)
+      stateProbe.expectMessage(State(9, Vector(0, 1, 2, 3, 4, 5, 6, 7, 8), active = true))
+    }
+
+    // FIXME what is desired behavior?
+    "discard external stashing state when persist failed" in {
+      val c = spawn(counter(PersistenceId("fail-fifth-b")))
+      val ackProbe = TestProbe[Ack]
+      val stateProbe = TestProbe[State]
+
+      c ! Increment("inc-1", ackProbe.ref)
+      ackProbe.expectMessage(Ack("inc-1"))
+
+      c ! Deactivate("deact", ackProbe.ref)
+      ackProbe.expectMessage(Ack("deact"))
+
+      c ! Increment("inc-2", ackProbe.ref)
+      c ! Increment("inc-3", ackProbe.ref) // this will fail when unstashed
+      c ! Increment("inc-4", ackProbe.ref)
+      c ! Increment("inc-5", ackProbe.ref)
+      c ! GetValue(stateProbe.ref)
+      stateProbe.expectMessage(State(1, Vector(0), active = false))
+
+      c ! Activate("act", ackProbe.ref)
+      c ! Increment("inc-6", ackProbe.ref)
+
+      ackProbe.expectMessage(Ack("act"))
+      ackProbe.expectMessage(Ack("inc-2"))
+      // inc-3 failed
+      // inc-4, inc-5 still in external stash buffer but UnstashAll in progress was aborted -- not desired
+      ackProbe.expectMessage(Ack("inc-6"))
+
+      c ! GetValue(stateProbe.ref)
+      stateProbe.expectMessage(State(3, Vector(0, 1, 2), active = true))
     }
   }
 

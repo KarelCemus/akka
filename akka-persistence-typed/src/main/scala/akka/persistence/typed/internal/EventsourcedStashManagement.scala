@@ -28,7 +28,7 @@ private[akka] trait EventsourcedStashManagement[C, E, S] {
 
   private def externalStashBuffer: StashBuffer[InternalProtocol] = setup.externalStash
 
-  // FIXME keep state when restarting?
+  // FIXME keep state when restarting? we could move this to EventsourcedStashReferenceManagement
   private var unstashAllExternalInProgress = 0
 
   /**

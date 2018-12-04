@@ -22,13 +22,15 @@ import scala.util.Try
 import akka.persistence.typed.PersistenceId
 
 class ChaosJournal extends InmemJournal {
-  var count = 0
+  var counts = Map.empty[String, Int]
   var failRecovery = true
   var reject = true
   override def asyncWriteMessages(messages: immutable.Seq[AtomicWrite]): Future[immutable.Seq[Try[Unit]]] = {
     val pid = messages.head.persistenceId
-    if (pid == "fail-first-2" && count < 2) {
-      count += 1
+    counts = counts.updated(pid, counts.getOrElse(pid, 0) + 1)
+    if (pid == "fail-first-2" && counts(pid) <= 2) {
+      Future.failed(TE("database says no"))
+    } else if (pid.startsWith("fail-fifth") && counts(pid) == 5) {
       Future.failed(TE("database says no"))
     } else if (pid == "reject-first" && reject) {
       reject = false
@@ -60,7 +62,7 @@ object PersistentBehaviorFailureSpec {
       failure-journal {
         class = "akka.persistence.typed.scaladsl.ChaosJournal"
       }
-    """).withFallback(ConfigFactory.load("reference.conf")).resolve()
+    """).withFallback(ConfigFactory.defaultReference()).resolve()
 }
 
 class PersistentBehaviorFailureSpec extends ScalaTestWithActorTestKit(PersistentBehaviorFailureSpec.conf) with WordSpecLike {
