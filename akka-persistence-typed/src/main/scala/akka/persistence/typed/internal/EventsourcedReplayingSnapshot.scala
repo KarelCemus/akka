@@ -93,7 +93,7 @@ private[akka] class EventsourcedReplayingSnapshot[C, E, S](override val setup: E
 
   def onCommand(cmd: IncomingCommand[C]): Behavior[InternalProtocol] = {
     // during recovery, stash all incoming commands
-    setup.internalStash.stash(cmd)
+    stashInternal(cmd)
     Behavior.same
   }
 

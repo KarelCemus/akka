@@ -9,7 +9,7 @@ import scala.concurrent.ExecutionContext
 import akka.Done
 import akka.actor.typed.Logger
 import akka.actor.{ ActorRef, ExtendedActorSystem }
-import akka.actor.typed.scaladsl.{ ActorContext, StashBuffer }
+import akka.actor.typed.scaladsl.ActorContext
 import akka.annotation.InternalApi
 import akka.persistence._
 import akka.persistence.typed.EventAdapter
@@ -43,8 +43,7 @@ private[persistence] final class EventsourcedSetup[C, E, S](
   val recovery:              Recovery,
   var holdingRecoveryPermit: Boolean,
   val settings:              EventsourcedSettings,
-  val internalStash:         StashBuffer[InternalProtocol],
-  val externalStash:         StashBuffer[InternalProtocol]
+  val stashState:            StashState
 ) {
   import akka.actor.typed.scaladsl.adapter._
 

@@ -4,6 +4,8 @@
 
 package akka.persistence.typed.scaladsl
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.duration._
@@ -26,8 +28,8 @@ import org.scalatest.WordSpecLike
 object PersistentBehaviorStashSpec {
   def conf: Config = ConfigFactory.parseString(
     s"""
-    akka.loglevel = DEBUG
-    akka.persistence.typed.log-stashing = on
+    #akka.loglevel = DEBUG
+    #akka.persistence.typed.log-stashing = on
     akka.persistence.journal.plugin = "akka.persistence.journal.inmem"
     akka.persistence.journal.plugin = "failure-journal"
     failure-journal = $${akka.persistence.journal.inmem}
@@ -48,7 +50,9 @@ object PersistentBehaviorStashSpec {
   // Retrieve current state, independent of active/inactive
   final case class GetValue(replyTo: ActorRef[State]) extends Command[State]
   final case class Unhandled(replyTo: ActorRef[NotUsed]) extends Command[NotUsed]
-  final case class Throw(id: String, t: Throwable, replyTo: ActorRef[Ack]) extends Command[Ack]
+  final case class Throw(id: String, t: Throwable, override val replyTo: ActorRef[Ack]) extends Command[Ack]
+  final case class IncrementThenThrow(id: String, t: Throwable, override val replyTo: ActorRef[Ack]) extends Command[Ack]
+  final case class Slow(id: String, latch: CountDownLatch, override val replyTo: ActorRef[Ack]) extends Command[Ack]
 
   final case class Ack(id: String)
 
@@ -63,7 +67,7 @@ object PersistentBehaviorStashSpec {
   def counter(persistenceId: PersistenceId): Behavior[Command[_]] =
     Behaviors.supervise[Command[_]] {
       Behaviors.setup(ctx ⇒ counter(ctx, persistenceId))
-    }.onFailure(SupervisorStrategy.restart)
+    }.onFailure(SupervisorStrategy.restart.withLoggingEnabled(on = false))
 
   def counter(
     ctx:           ActorContext[Command[_]],
@@ -77,7 +81,7 @@ object PersistentBehaviorStashSpec {
       },
       eventHandler = (state, evt) ⇒ evt match {
         case Incremented(delta) ⇒
-          //          if (!state.active) throw new IllegalStateException
+          if (!state.active) throw new IllegalStateException
           State(state.value + delta, state.history :+ state.value, active = true)
         case ValueUpdated(value) ⇒
           State(value, state.history :+ state.value, active = state.active)
@@ -88,7 +92,8 @@ object PersistentBehaviorStashSpec {
           if (!state.active) throw new IllegalStateException
           state.copy(active = false)
       })
-      .onPersistFailure(SupervisorStrategy.restartWithBackoff(1.second, maxBackoff = 2.seconds, 0.0))
+      .onPersistFailure(SupervisorStrategy.restartWithBackoff(1.second, maxBackoff = 2.seconds, 0.0)
+        .withLoggingEnabled(on = false))
   }
 
   private def active(state: State, command: Command[_]): ReplyEffect[Event, State] = {
@@ -112,6 +117,13 @@ object PersistentBehaviorStashSpec {
       case Throw(id, t, replyTo) ⇒
         replyTo ! Ack(id)
         throw t
+      case cmd: IncrementThenThrow ⇒
+        Effect.persist(Incremented(1))
+          .thenRun((_: State) ⇒ throw cmd.t)
+          .thenNoReply()
+      case cmd: Slow ⇒
+        cmd.latch.await(30, TimeUnit.SECONDS)
+        Effect.reply(cmd)(Ack(cmd.id))
     }
   }
 
@@ -136,6 +148,10 @@ object PersistentBehaviorStashSpec {
       case Throw(id, t, replyTo) ⇒
         replyTo ! Ack(id)
         throw t
+      case _: IncrementThenThrow ⇒
+        Effect.stash()
+      case _: Slow ⇒
+        Effect.stash()
     }
   }
 }
@@ -350,8 +366,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       value3 should ===(8100)
     }
 
-    // FIXME what is desired behavior?
-    "discard stashing state when restarted" in {
+    "discard external stash when restarted due to thrown exception" in {
       val c = spawn(counter(nextPid()))
       val ackProbe = TestProbe[Ack]
       val stateProbe = TestProbe[State]
@@ -386,8 +401,37 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       stateProbe.expectMessage(State(3, Vector(0, 1, 2), active = true))
     }
 
-    // FIXME what is desired behavior?
-    "keep internal stashing state when persist failed" in {
+    "discard internal stash when restarted due to thrown exception" in {
+      val c = spawn(counter(nextPid()))
+      val ackProbe = TestProbe[Ack]
+      val stateProbe = TestProbe[State]
+      val latch = new CountDownLatch(1)
+
+      // make first command slow to ensure that all subsequent commands are enqueued first
+      c ! Slow("slow", latch, ackProbe.ref)
+
+      (1 to 10).foreach { n ⇒
+        if (n == 3)
+          c ! IncrementThenThrow(s"inc-$n", new TestException("test"), ackProbe.ref)
+        else
+          c ! Increment(s"inc-$n", ackProbe.ref)
+      }
+
+      latch.countDown()
+      ackProbe.expectMessage(Ack("slow"))
+
+      ackProbe.expectMessage(Ack("inc-1"))
+      ackProbe.expectMessage(Ack("inc-2"))
+      ackProbe.expectNoMessage()
+
+      c ! Increment("inc-11", ackProbe.ref)
+      ackProbe.expectMessage(Ack("inc-11"))
+
+      c ! GetValue(stateProbe.ref)
+      stateProbe.expectMessage(State(4, Vector(0, 1, 2, 3), active = true))
+    }
+
+    "preserve internal stash when persist failed" in {
       val c = spawn(counter(PersistenceId("fail-fifth-a")))
       val ackProbe = TestProbe[Ack]
       val stateProbe = TestProbe[State]
@@ -405,8 +449,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       stateProbe.expectMessage(State(9, Vector(0, 1, 2, 3, 4, 5, 6, 7, 8), active = true))
     }
 
-    // FIXME what is desired behavior?
-    "discard external stashing state when persist failed" in {
+    "preserve external stash when persist failed" in {
       val c = spawn(counter(PersistenceId("fail-fifth-b")))
       val ackProbe = TestProbe[Ack]
       val stateProbe = TestProbe[State]
@@ -430,11 +473,13 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       ackProbe.expectMessage(Ack("act"))
       ackProbe.expectMessage(Ack("inc-2"))
       // inc-3 failed
-      // inc-4, inc-5 still in external stash buffer but UnstashAll in progress was aborted -- not desired
+      // inc-4, inc-5 still in external stash and processed due to UnstashAll that was in progress
+      ackProbe.expectMessage(Ack("inc-4"))
+      ackProbe.expectMessage(Ack("inc-5"))
       ackProbe.expectMessage(Ack("inc-6"))
 
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(3, Vector(0, 1, 2), active = true))
+      stateProbe.expectMessage(State(5, Vector(0, 1, 2, 3, 4), active = true))
     }
   }
 

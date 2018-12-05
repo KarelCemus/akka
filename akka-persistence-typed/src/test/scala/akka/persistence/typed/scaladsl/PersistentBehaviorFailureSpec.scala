@@ -81,7 +81,8 @@ class PersistentBehaviorFailureSpec extends ScalaTestWithActorTestKit(Persistent
     }
   ).onRecoveryCompleted { state ⇒
       probe.tell("starting")
-    }.onPersistFailure(SupervisorStrategy.restartWithBackoff(1.milli, 5.millis, 0.1))
+    }.onPersistFailure(SupervisorStrategy.restartWithBackoff(1.milli, 5.millis, 0.1)
+      .withLoggingEnabled(on = false))
 
   "A typed persistent actor (failures)" must {
     "restart with backoff" in {
@@ -121,7 +122,8 @@ class PersistentBehaviorFailureSpec extends ScalaTestWithActorTestKit(Persistent
       val behav =
         Behaviors.supervise(
           failingPersistentActor(PersistenceId("reject-first"), probe.ref)).onFailure[EventRejectedException](
-            SupervisorStrategy.restartWithBackoff(1.milli, 5.millis, 0.1))
+            SupervisorStrategy.restartWithBackoff(1.milli, 5.millis, 0.1)
+              .withLoggingEnabled(on = false))
       val c = spawn(behav)
       // First time fails, second time should work and call onRecoveryComplete
       probe.expectMessage("starting")

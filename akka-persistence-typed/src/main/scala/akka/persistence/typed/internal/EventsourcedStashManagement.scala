@@ -22,14 +22,13 @@ private[akka] trait EventsourcedStashManagement[C, E, S] {
 
   private def context: ActorContext[InternalProtocol] = setup.context
 
-  private def internalStashBuffer: StashBuffer[InternalProtocol] = setup.internalStash
+  private def stashState: StashState = setup.stashState
+
+  private def internalStashBuffer: StashBuffer[InternalProtocol] = stashState.internalStashBuffer
 
   protected def isInternalStashEmpty: Boolean = internalStashBuffer.isEmpty
 
-  private def externalStashBuffer: StashBuffer[InternalProtocol] = setup.externalStash
-
-  // FIXME keep state when restarting? we could move this to EventsourcedStashReferenceManagement
-  private var unstashAllExternalInProgress = 0
+  private def externalStashBuffer: StashBuffer[InternalProtocol] = stashState.externalStashBuffer
 
   /**
    * Stash a command to the internal stash buffer, which is used while waiting for persist to be completed.
@@ -69,7 +68,7 @@ private[akka] trait EventsourcedStashManagement[C, E, S] {
    */
   protected def tryUnstashOne(behavior: Behavior[InternalProtocol]): Behavior[InternalProtocol] = {
     val buffer =
-      if (unstashAllExternalInProgress > 0)
+      if (stashState.isUnstashAllExternalInProgress)
         externalStashBuffer
       else
         internalStashBuffer
@@ -79,8 +78,8 @@ private[akka] trait EventsourcedStashManagement[C, E, S] {
         "Unstashing message from {} stash: [{}]",
         if (buffer eq internalStashBuffer) "internal" else "external", buffer.head)
 
-      if (unstashAllExternalInProgress > 0)
-        unstashAllExternalInProgress -= 1
+      if (stashState.isUnstashAllExternalInProgress)
+        stashState.decrementUnstashAllExternalProgress()
 
       buffer.unstash(setup.context, behavior, 1, ConstantFun.scalaIdentityFunction)
     } else behavior
@@ -98,7 +97,7 @@ private[akka] trait EventsourcedStashManagement[C, E, S] {
       if (setup.settings.logOnStashing) setup.log.debug(
         "Unstashing all [{}] messages from external stash, first is: [{}]",
         externalStashBuffer.size, externalStashBuffer.head)
-      unstashAllExternalInProgress = externalStashBuffer.size
+      stashState.startUnstashAllExternal()
       // tryUnstashOne is called from EventSourcedRunning at the end of processing each command (or when persist is completed)
     }
   }

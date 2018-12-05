@@ -46,15 +46,17 @@ private[akka] final case class PersistentBehaviorImpl[Command, Event, State](
   recovery:            Recovery                                                 = Recovery(),
   supervisionStrategy: SupervisorStrategy                                       = SupervisorStrategy.stop,
   onSnapshot:          (SnapshotMetadata, Try[Done]) ⇒ Unit                     = ConstantFun.scalaAnyTwoToUnit
-) extends PersistentBehavior[Command, Event, State] with EventsourcedStashReferenceManagement {
+) extends PersistentBehavior[Command, Event, State] {
 
   override def apply(context: typed.ActorContext[Command]): Behavior[Command] = {
-    Behaviors.supervise {
-      Behaviors.setup[Command] { ctx ⇒
-        val settings = EventsourcedSettings(ctx.system, journalPluginId.getOrElse(""), snapshotPluginId.getOrElse(""))
+    val ctx = context.asScala
+    val settings = EventsourcedSettings(ctx.system, journalPluginId.getOrElse(""), snapshotPluginId.getOrElse(""))
 
-        val internalStash = internalStashBuffer(settings)
-        val externalStash = externalStashBuffer(settings)
+    // stashState outside supervise because StashState should survive restarts due to persist failures
+    val stashState = new StashState(settings)
+
+    Behaviors.supervise {
+      Behaviors.setup[Command] { _ ⇒
 
         // the default impl needs context which isn't available until here, so we
         // use the anyTwoToUnit as a marker to use the default
@@ -77,14 +79,15 @@ private[akka] final case class PersistentBehaviorImpl[Command, Event, State](
           recovery,
           holdingRecoveryPermit = false,
           settings = settings,
-          internalStash = internalStash,
-          externalStash = externalStash
+          stashState = stashState
         )
 
         // needs to accept Any since we also can get messages from the journal
         // not part of the protocol
         val onStopInterceptor = new BehaviorInterceptor[Any, Any] {
+
           import BehaviorInterceptor._
+
           def aroundReceive(ctx: typed.ActorContext[Any], msg: Any, target: ReceiveTarget[Any]): Behavior[Any] = {
             target(ctx, msg)
           }
@@ -92,7 +95,7 @@ private[akka] final case class PersistentBehaviorImpl[Command, Event, State](
           def aroundSignal(ctx: typed.ActorContext[Any], signal: Signal, target: SignalTarget[Any]): Behavior[Any] = {
             if (signal == PostStop) {
               eventsourcedSetup.cancelRecoveryTimer()
-              clearStashBuffers()
+              stashState.clearStashBuffers()
             }
             target(ctx, signal)
           }
@@ -106,6 +109,7 @@ private[akka] final case class PersistentBehaviorImpl[Command, Event, State](
         }
         Behaviors.intercept(onStopInterceptor)(widened).narrow[Command]
       }
+
     }.onFailure[JournalFailureException](supervisionStrategy)
   }
 

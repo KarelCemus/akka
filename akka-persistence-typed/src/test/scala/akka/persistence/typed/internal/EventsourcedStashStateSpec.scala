@@ -14,20 +14,10 @@ import scala.concurrent.duration._
 import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.scalatest.WordSpecLike
 
-class EventsourcedStashReferenceManagementTest extends ScalaTestWithActorTestKit with WordSpecLike {
-
-  case class Impl() extends EventsourcedStashReferenceManagement
+class EventsourcedStashStateSpec extends ScalaTestWithActorTestKit with WordSpecLike {
 
   "EventsourcedStashReferenceManagement instance" should {
-    "initialize stash only once" in {
-      val ref = Impl()
-      assert(ref.internalStashBuffer(dummySettings()).eq(ref.internalStashBuffer(dummySettings())))
-    }
-    // or should we?
-    "not reinitialize when capacity changes" in {
-      val ref = Impl()
-      assert(ref.internalStashBuffer(dummySettings()).eq(ref.internalStashBuffer(dummySettings(21))))
-    }
+
     "clear buffer on PostStop" in {
       val probe = TestProbe[Int]()
       val behavior = TestBehavior(probe)
@@ -44,23 +34,24 @@ class EventsourcedStashReferenceManagementTest extends ScalaTestWithActorTestKit
     }
   }
 
-  object TestBehavior extends EventsourcedStashReferenceManagement {
+  object TestBehavior {
 
     def apply(probe: TestProbe[Int]): Behavior[InternalProtocol] = {
       val settings = dummySettings()
-      Behaviors.setup[InternalProtocol](ctx ⇒
+      Behaviors.setup[InternalProtocol] { ctx ⇒
+        val stashState = new StashState(settings)
         Behaviors.receiveMessagePartial[InternalProtocol] {
           case RecoveryPermitGranted ⇒
-            internalStashBuffer(settings).stash(RecoveryPermitGranted)
-            probe.ref ! internalStashBuffer(settings).size
+            stashState.internalStashBuffer.stash(RecoveryPermitGranted)
+            probe.ref ! stashState.internalStashBuffer.size
             Behaviors.same[InternalProtocol]
           case _: IncomingCommand[_] ⇒ Behaviors.stopped
         }.receiveSignal {
           case (_, signal: Signal) ⇒
-            clearStashBuffers()
+            stashState.clearStashBuffers()
             Behaviors.stopped[InternalProtocol]
         }
-      )
+      }
     }
   }
 
