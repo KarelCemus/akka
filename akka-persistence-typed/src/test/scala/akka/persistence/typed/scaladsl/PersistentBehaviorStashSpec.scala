@@ -62,7 +62,7 @@ object PersistentBehaviorStashSpec {
   case object Activated extends Event
   case object Deactivated extends Event
 
-  final case class State(value: Int, history: Vector[Int], active: Boolean)
+  final case class State(value: Int, active: Boolean)
 
   def counter(persistenceId: PersistenceId): Behavior[Command[_]] =
     Behaviors.supervise[Command[_]] {
@@ -74,7 +74,7 @@ object PersistentBehaviorStashSpec {
     persistenceId: PersistenceId): PersistentBehavior[Command[_], Event, State] = {
     PersistentBehavior.withEnforcedReplies[Command[_], Event, State](
       persistenceId,
-      emptyState = State(0, Vector.empty, active = true),
+      emptyState = State(0, active = true),
       commandHandler = (state, command) ⇒ {
         if (state.active) active(state, command)
         else inactive(state, command)
@@ -82,9 +82,9 @@ object PersistentBehaviorStashSpec {
       eventHandler = (state, evt) ⇒ evt match {
         case Incremented(delta) ⇒
           if (!state.active) throw new IllegalStateException
-          State(state.value + delta, state.history :+ state.value, active = true)
+          State(state.value + delta, active = true)
         case ValueUpdated(value) ⇒
-          State(value, state.history :+ state.value, active = state.active)
+          State(value, active = state.active)
         case Activated ⇒
           if (state.active) throw new IllegalStateException
           state.copy(active = true)
@@ -179,7 +179,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       c ! Increment("3", ackProbe.ref)
       c ! Increment("4", ackProbe.ref)
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(1, Vector(0), active = false))
+      stateProbe.expectMessage(State(1, active = false))
 
       c ! Activate("5", ackProbe.ref)
       c ! Increment("6", ackProbe.ref)
@@ -190,7 +190,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       ackProbe.expectMessage(Ack("6"))
 
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(4, Vector(0, 1, 2, 3), active = true))
+      stateProbe.expectMessage(State(4, active = true))
     }
 
     "handle mix of stash, persist and unstash" in {
@@ -211,11 +211,11 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       ackProbe.expectMessage(Ack("5"))
 
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(100, Vector(0, 1), active = false))
+      stateProbe.expectMessage(State(100, active = false))
 
       c ! Activate("6", ackProbe.ref)
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(102, Vector(0, 1, 100, 101), active = true))
+      stateProbe.expectMessage(State(102, active = true))
       ackProbe.expectMessage(Ack("6"))
       ackProbe.expectMessage(Ack("3"))
       ackProbe.expectMessage(Ack("4"))
@@ -380,14 +380,14 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       c ! Increment("inc-2", ackProbe.ref)
       c ! Increment("inc-3", ackProbe.ref)
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(1, Vector(0), active = false))
+      stateProbe.expectMessage(State(1, active = false))
 
       c ! Throw("throw", new TestException("test"), ackProbe.ref)
       ackProbe.expectMessage(Ack("throw"))
 
       c ! Increment("inc-4", ackProbe.ref)
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(1, Vector(0), active = false))
+      stateProbe.expectMessage(State(1, active = false))
 
       c ! Activate("act", ackProbe.ref)
       c ! Increment("inc-5", ackProbe.ref)
@@ -398,7 +398,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       ackProbe.expectMessage(Ack("inc-5"))
 
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(3, Vector(0, 1, 2), active = true))
+      stateProbe.expectMessage(State(3, active = true))
     }
 
     "discard internal stash when restarted due to thrown exception" in {
@@ -428,7 +428,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       ackProbe.expectMessage(Ack("inc-11"))
 
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(4, Vector(0, 1, 2, 3), active = true))
+      stateProbe.expectMessage(State(4, active = true))
     }
 
     "preserve internal stash when persist failed" in {
@@ -446,7 +446,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       }
 
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(9, Vector(0, 1, 2, 3, 4, 5, 6, 7, 8), active = true))
+      stateProbe.expectMessage(State(9, active = true))
     }
 
     "preserve external stash when persist failed" in {
@@ -465,7 +465,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       c ! Increment("inc-4", ackProbe.ref)
       c ! Increment("inc-5", ackProbe.ref)
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(1, Vector(0), active = false))
+      stateProbe.expectMessage(State(1, active = false))
 
       c ! Activate("act", ackProbe.ref)
       c ! Increment("inc-6", ackProbe.ref)
@@ -479,7 +479,7 @@ class PersistentBehaviorStashSpec extends ScalaTestWithActorTestKit(PersistentBe
       ackProbe.expectMessage(Ack("inc-6"))
 
       c ! GetValue(stateProbe.ref)
-      stateProbe.expectMessage(State(5, Vector(0, 1, 2, 3, 4), active = true))
+      stateProbe.expectMessage(State(5, active = true))
     }
   }
 
