@@ -53,7 +53,12 @@ lazy val root = Project(
   base = file(".")
 ).aggregate(aggregatedProjects: _*)
  .settings(rootSettings: _*)
- .settings(unidocRootIgnoreProjects := Seq(remoteTests, benchJmh, protobuf, akkaScalaNightly, docs))
+ .settings(unidocRootIgnoreProjects :=
+   (CrossVersion.partialVersion(scalaVersion.value) match {
+     case Some((2, n)) if n == 12 ⇒ Seq(remoteTests, benchJmh, protobuf, akkaScalaNightly, docs)
+     case _                       ⇒ aggregatedProjects // ignore all, only unidoc when scalaVersion is 2.12
+   })
+ )
  .settings(
    unmanagedSources in(Compile, headerCreate) := (baseDirectory.value / "project").**("*.scala").get
  )
