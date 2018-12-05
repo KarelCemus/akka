@@ -20,7 +20,6 @@ import akka.actor.typed.scaladsl.ActorContext
 import akka.actor.typed.scaladsl.Behaviors
 import akka.persistence.typed.ExpectingReply
 import akka.persistence.typed.PersistenceId
-import akka.persistence.typed.SideEffect
 import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
 import org.scalatest.WordSpecLike
@@ -141,7 +140,7 @@ object PersistentBehaviorStashSpec {
         Effect.reply(cmd)(Ack(cmd.id))
       case cmd: Activate ⇒
         Effect.persist(Activated)
-          .andThen(SideEffect.unstashAll[State]()) // FIXME perhaps we need `.thenUnstashAll`
+          .thenUnstashAll()
           .thenReply(cmd)(_ ⇒ Ack(cmd.id))
       case _: Unhandled ⇒
         Effect.unhandled.thenNoReply()

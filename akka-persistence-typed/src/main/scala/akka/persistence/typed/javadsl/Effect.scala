@@ -4,14 +4,14 @@
 
 package akka.persistence.typed.javadsl
 
-import akka.annotation.DoNotInherit
-import akka.japi.function
-import akka.persistence.typed.internal._
-import akka.persistence.typed.SideEffect
 import scala.collection.JavaConverters._
 
+import akka.annotation.DoNotInherit
 import akka.annotation.InternalApi
+import akka.japi.function
 import akka.persistence.typed.ExpectingReply
+import akka.persistence.typed.SideEffect
+import akka.persistence.typed.internal._
 
 /**
  * INTERNAL API: see `class EffectFactories`
@@ -53,19 +53,21 @@ import akka.persistence.typed.ExpectingReply
   def unhandled(): Effect[Event, State] = Unhandled.asInstanceOf[Effect[Event, State]]
 
   /**
-   * Stash the current command. Can be unstashed later with [[SideEffect.unstashAll]]
-   * or [[EffectFactories.unstashAll]].
+   * Stash the current command. Can be unstashed later with `Effect.thenUnstashAll`
+   * or `EffectFactories.unstashAll`.
    *
-   * Side effects can be chained with `andThen`
+   * Side effects can be chained with `andThen`.
    */
   def stash(): ReplyEffect[Event, State] =
     Stash.asInstanceOf[Effect[Event, State]].thenNoReply()
 
   /**
-   * Unstash the commands that were stashed with [[EffectFactories.stash]].
+   * Unstash the commands that were stashed with `EffectFactories.stash`.
    *
    * Side effects can be chained with `andThen`, but note that the side effect is run immediately and not after
    * processing all unstashed commands.
+   *
+   * @see [[Effect.thenUnstashAll]]
    */
   def unstashAll(): Effect[Event, State] =
     none().andThen(SideEffect.unstashAll())
@@ -126,6 +128,11 @@ import akka.persistence.typed.ExpectingReply
 
   /** The side effect is to stop the actor */
   def thenStop(): Effect[Event, State]
+
+  /**
+   * Unstash the commands that were stashed with `EffectFactories.stash`.
+   */
+  def thenUnstashAll(): Effect[Event, State]
 
   /**
    * Send a reply message to the command, which implements [[ExpectingReply]]. The type of the

@@ -5,8 +5,8 @@
 package akka.persistence.typed
 
 import akka.actor.typed.ActorRef
+import akka.annotation.InternalApi
 import akka.japi.function
-import akka.annotation.{ DoNotInherit, InternalApi }
 
 /**
  * A [[SideEffect]] is an side effect that can be chained after a main effect.

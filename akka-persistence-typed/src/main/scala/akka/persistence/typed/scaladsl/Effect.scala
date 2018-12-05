@@ -4,13 +4,13 @@
 
 package akka.persistence.typed.scaladsl
 
-import akka.annotation.DoNotInherit
-import akka.persistence.typed.{ SideEffect, Stop }
-import akka.persistence.typed.internal._
 import scala.collection.{ immutable ⇒ im }
 
+import akka.annotation.DoNotInherit
 import akka.persistence.typed.ExpectingReply
 import akka.persistence.typed.ReplyEffectImpl
+import akka.persistence.typed.SideEffect
+import akka.persistence.typed.internal._
 
 /**
  * Factory methods for creating [[Effect]] directives - how a persistent actor reacts on a command.
@@ -61,7 +61,7 @@ object Effect {
   def stop[Event, State](): Effect[Event, State] = none.thenStop()
 
   /**
-   * Stash the current command. Can be unstashed later with [[SideEffect.unstashAll]] or [[Effect.unstashAll]].
+   * Stash the current command. Can be unstashed later with [[Effect.unstashAll]].
    *
    * Side effects can be chained with `andThen`
    */
@@ -72,7 +72,9 @@ object Effect {
    * Unstash the commands that were stashed with [[Effect.stash]].
    *
    * Side effects can be chained with `andThen`, but note that the side effect is run immediately and not after
-   * * processing all unstashed commands.
+   * processing all unstashed commands.
+   *
+   * @see [[Effect.thenUnstashAll]]
    */
   def unstashAll[Event, State](): Effect[Event, State] =
     none.andThen(SideEffect.unstashAll[State]())
@@ -131,6 +133,11 @@ trait Effect[+Event, State] {
 
   /** The side effect is to stop the actor */
   def thenStop(): Effect[Event, State]
+
+  /**
+   * Unstash the commands that were stashed with [[Effect.stash]].
+   */
+  def thenUnstashAll(): Effect[Event, State]
 
   /**
    * Send a reply message to the command, which implements [[ExpectingReply]]. The type of the
