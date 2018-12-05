@@ -63,6 +63,11 @@ object Effect {
   /**
    * Stash the current command. Can be unstashed later with [[Effect.unstashAll]].
    *
+   * Note that the stashed commands are kept in an in-memory buffer, so in case of a crash they will not be
+   * processed. They will also be discarded if the actor is restarted (or stopped) due to that an exception was
+   * thrown from processing a command or side effect after persisting. The stash buffer is preserved for persist
+   * failures if a backoff supervisor strategy is defined with [[PersistentBehavior.onPersistFailure]].
+   *
    * Side effects can be chained with `andThen`
    */
   def stash[Event, State](): ReplyEffect[Event, State] =

@@ -17,14 +17,14 @@ import akka.persistence.typed.internal._
 import scala.util.{ Failure, Success }
 
 @ApiMayChange
-abstract class PersistentBehavior[Command, Event, State >: Null] private[akka] (val persistenceId: PersistenceId, supervisorStrategy: Optional[BackoffSupervisorStrategy]) extends DeferredBehavior[Command] {
+abstract class PersistentBehavior[Command, Event, State >: Null] private[akka] (val persistenceId: PersistenceId, onPersistFailure: Optional[BackoffSupervisorStrategy]) extends DeferredBehavior[Command] {
 
   def this(persistenceId: PersistenceId) = {
     this(persistenceId, Optional.empty[BackoffSupervisorStrategy])
   }
 
-  def this(persistenceId: PersistenceId, backoffSupervisorStrategy: BackoffSupervisorStrategy) = {
-    this(persistenceId, Optional.ofNullable(backoffSupervisorStrategy))
+  def this(persistenceId: PersistenceId, onPersistFailure: BackoffSupervisorStrategy) = {
+    this(persistenceId, Optional.ofNullable(onPersistFailure))
   }
 
   /**
@@ -169,8 +169,8 @@ abstract class PersistentBehavior[Command, Event, State >: Null] private[akka] (
         })
       }).eventAdapter(eventAdapter())
 
-    if (supervisorStrategy.isPresent)
-      behavior.onPersistFailure(supervisorStrategy.get)
+    if (onPersistFailure.isPresent)
+      behavior.onPersistFailure(onPersistFailure.get)
     else
       behavior
   }

@@ -56,6 +56,11 @@ import akka.persistence.typed.internal._
    * Stash the current command. Can be unstashed later with `Effect.thenUnstashAll`
    * or `EffectFactories.unstashAll`.
    *
+   * * Note that the stashed commands are kept in an in-memory buffer, so in case of a crash they will not be
+   * * processed. They will also be discarded if the actor is restarted (or stopped) due to that an exception was
+   * * thrown from processing a command or side effect after persisting. The stash buffer is preserved for persist
+   * * failures if an `onPersistFailure` backoff supervisor strategy is defined.
+   *
    * Side effects can be chained with `andThen`.
    */
   def stash(): ReplyEffect[Event, State] =
