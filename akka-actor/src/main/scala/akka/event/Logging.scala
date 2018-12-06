@@ -792,11 +792,13 @@ object Logging {
     extends Warning2(logSource, logClass, message, mdc) with LogEventWithMarker
   class Warning4(logSource: String, logClass: Class[_], message: Any, override val mdc: MDC, override val marker: LogMarker, override val cause: Throwable)
     extends Warning2(logSource, logClass, message, mdc) with LogEventWithMarker with LogEventWithCause
+  class Warning5(logSource: String, logClass: Class[_], message: Any, override val mdc: MDC, override val cause: Throwable)
+    extends Warning2(logSource, logClass, message, mdc) with LogEventWithCause
   object Warning {
     def apply(logSource: String, logClass: Class[_], message: Any, mdc: MDC) = new Warning2(logSource, logClass, message, mdc)
     def apply(logSource: String, logClass: Class[_], message: Any, mdc: MDC, marker: LogMarker) = new Warning3(logSource, logClass, message, mdc, marker)
 
-    def apply(cause: Throwable, logSource: String, logClass: Class[_], message: Any, mdc: MDC) = new Warning4(logSource, logClass, message, mdc, null, cause)
+    def apply(cause: Throwable, logSource: String, logClass: Class[_], message: Any, mdc: MDC) = new Warning5(logSource, logClass, message, mdc, cause)
     def apply(cause: Throwable, logSource: String, logClass: Class[_], message: Any, mdc: MDC, marker: LogMarker) = new Warning4(logSource, logClass, message, mdc, marker, cause)
   }
 
